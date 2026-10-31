@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Video, UploadCloud, Sparkles, Sliders, Download, Film, 
   Layers, CheckCircle2, AlertCircle, RefreshCw, Link as LinkIcon,
-  FolderOpen, ShieldAlert, Check
+  FolderOpen, ShieldAlert, Check, PlayCircle
 } from 'lucide-react';
 import { apiService } from '../api/client';
 import { Campaign, SourceVideo, Clip, RenderOptions } from '../types';
@@ -24,6 +24,9 @@ export const Studio: React.FC = () => {
   const [urlInput, setUrlInput] = useState('');
   const [isProcessingIngest, setIsProcessingIngest] = useState(false);
   
+  // Downloaded videos history
+  const [downloadedVideos, setDownloadedVideos] = useState<SourceVideo[]>([]);
+
   // Current active data
   const [sourceVideo, setSourceVideo] = useState<SourceVideo | null>(null);
   const [clips, setClips] = useState<Clip[]>([]);
@@ -34,11 +37,20 @@ export const Studio: React.FC = () => {
   const [layoutMode, setLayoutMode] = useState<'BLUR_BG' | 'CENTER_CROP' | 'SPLIT'>('BLUR_BG');
   const [outroEnabled, setOutroEnabled] = useState(true);
   const [isRendering, setIsRendering] = useState(false);
+  const [isCurating, setIsCurating] = useState(false);
 
   // Load campaigns on mount
   useEffect(() => {
     loadCampaigns();
+    loadDownloadedVideos();
   }, []);
+
+  // When campaign changes, load downloaded videos for that campaign
+  useEffect(() => {
+    if (selectedCampaignId) {
+      loadDownloadedVideos(selectedCampaignId);
+    }
+  }, [selectedCampaignId]);
 
   const loadCampaigns = async () => {
     try {
@@ -52,7 +64,56 @@ export const Studio: React.FC = () => {
     }
   };
 
+  const loadDownloadedVideos = async (campaignId?: string) => {
+    try {
+      const videos = await apiService.getSourceVideos(campaignId);
+      setDownloadedVideos(videos);
+      // Auto-select latest video if none active
+      if (videos.length > 0 && !sourceVideo) {
+        handleSelectVideo(videos[0]);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const activeCampaign = campaigns.find((c) => c.id === selectedCampaignId);
+
+  const handleSelectVideo = async (video: SourceVideo) => {
+    setSourceVideo(video);
+    // Fetch existing clips for this video
+    try {
+      const existingClips = await apiService.getClipsForVideo(video.id);
+      if (existingClips.length > 0) {
+        setClips(existingClips);
+        setSelectedClip(existingClips[0]);
+      } else {
+        setClips([]);
+        // Default initial clip so player shows immediately
+        setSelectedClip({
+          id: `default-${video.id}`,
+          source_video_id: video.id,
+          title: video.title,
+          start_time: 0,
+          end_time: Math.min(45, video.duration_seconds || 45),
+          hook_text: 'Preview Video Mentah',
+          virality_score: 85,
+          layout_mode: 'BLUR_BG',
+          outro_enabled: true,
+          status: 'DRAFT',
+          verified_views: 0,
+          created_at: new Date().toISOString(),
+        });
+
+        // If transcript already exists, trigger curation
+        if (video.transcript && video.transcript.segments && video.transcript.segments.length > 0) {
+          handleCurateClips(video.id);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // Import Campaign directly from Konten.com URL
   const handleImportCampaign = async () => {
@@ -92,16 +153,34 @@ export const Studio: React.FC = () => {
     try {
       const type = urlInput.includes('drive.google.com') ? 'GDRIVE' : 'YOUTUBE';
       const video = await apiService.ingestUrl(urlInput, type, selectedCampaignId);
+      
+      // Immediately set source video & initial default clip so player renders right away!
       setSourceVideo(video);
-      message.success('Materi berhasil diunduh! Sedang memproses transkrip otomatis...');
+      setSelectedClip({
+        id: `default-${video.id}`,
+        source_video_id: video.id,
+        title: video.title,
+        start_time: 0,
+        end_time: Math.min(45, video.duration_seconds || 45),
+        hook_text: 'Video berhasil diunduh. Sedang mentranskripsi audio...',
+        virality_score: 85,
+        layout_mode: 'BLUR_BG',
+        outro_enabled: true,
+        status: 'DRAFT',
+        verified_views: 0,
+        created_at: new Date().toISOString(),
+      });
+
+      message.success('Video berhasil diunduh! Player aktif. Sedang memproses transkrip otomatis...');
+      loadDownloadedVideos(selectedCampaignId);
 
       // Polling for transcription completion
       const pollInterval = setInterval(async () => {
         const updated = await apiService.getSourceVideo(video.id);
-        if (updated.transcript && updated.transcript.segments.length > 0) {
+        if (updated.transcript && updated.transcript.segments && updated.transcript.segments.length > 0) {
           clearInterval(pollInterval);
           setSourceVideo(updated);
-          message.success('Transkrip selesai! Menjalankan AI Curation...');
+          message.success('Transkrip selesai! Menjalankan kurasi klip AI...');
           handleCurateClips(updated.id);
         }
       }, 3000);
@@ -114,6 +193,7 @@ export const Studio: React.FC = () => {
 
   // Handle AI Curate Clips
   const handleCurateClips = async (videoId: string) => {
+    setIsCurating(true);
     try {
       const curatedClips = await apiService.curateClips(videoId);
       setClips(curatedClips);
@@ -123,6 +203,8 @@ export const Studio: React.FC = () => {
       message.success(`Ditemukan ${curatedClips.length} klip berpotensi tinggi!`);
     } catch (err: any) {
       message.error(err.response?.data?.detail || 'Gagal kurasi klip');
+    } finally {
+      setIsCurating(false);
     }
   };
 
@@ -174,6 +256,10 @@ export const Studio: React.FC = () => {
       message.error('Gagal menyimpan link submission');
     }
   };
+
+  // Calculate clean video URL
+  const rawFilename = sourceVideo?.local_path ? sourceVideo.local_path.split('\\').pop()?.split('/').pop() : '';
+  const currentVideoUrl = selectedClip?.output_video_path || (rawFilename ? `/storage/raw/${rawFilename}` : '');
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
@@ -238,7 +324,7 @@ export const Studio: React.FC = () => {
             </div>
           </div>
 
-          {/* Materi Quick-Picker (if campaign has multiple official materials from Konten.com) */}
+          {/* Materi Quick-Picker */}
           {activeCampaign?.materials && activeCampaign.materials.length > 0 && (
             <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
@@ -256,6 +342,33 @@ export const Studio: React.FC = () => {
                     }`}
                   >
                     {m.title || `Materi #${idx + 1}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Riwayat Video yang Sudah Diunduh */}
+          {downloadedVideos.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+              <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                <PlayCircle size={13} className="text-emerald-400" /> Video Tersedia ({downloadedVideos.length}):
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {downloadedVideos.map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => handleSelectVideo(v)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] border flex items-center gap-1.5 transition-all ${
+                      sourceVideo?.id === v.id
+                        ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span className="truncate max-w-[200px]">{v.title}</span>
+                    <span className="font-mono text-[10px] opacity-75">
+                      {Math.floor(v.duration_seconds / 60)}m
+                    </span>
                   </button>
                 ))}
               </div>
@@ -327,17 +440,42 @@ export const Studio: React.FC = () => {
         </div>
       </Modal>
 
+      {/* Transcription & Curation Live Status Alert */}
+      {sourceVideo && !sourceVideo.transcript && (
+        <div className="bg-amber-950/40 border border-amber-800/80 rounded-2xl p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Spin size="small" />
+            <div>
+              <div className="text-xs font-bold text-amber-300">
+                Audio Sedang Ditranskripsi Menggunakan faster-whisper...
+              </div>
+              <div className="text-[11px] text-amber-400/80">
+                Video sudah bisa diputar langsung di preview bawah. AI akan otomatis menampilkan klip terbaik setelah transkripsi selesai.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => handleCurateClips(sourceVideo.id)}
+            disabled={isCurating}
+            className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-bold text-white flex items-center gap-1.5"
+          >
+            {isCurating ? <Spin size="small" /> : <Sparkles size={13} />}
+            Trigger Kurasi AI
+          </button>
+        </div>
+      )}
+
       {/* Curated Clips Selector Pills */}
       {clips.length > 0 && (
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <span className="text-xs font-semibold text-slate-400 flex items-center gap-1">
+          <span className="text-xs font-semibold text-slate-400 flex items-center gap-1 whitespace-nowrap">
             <Film size={14} className="text-indigo-400" /> Hasil Kurasi AI:
           </span>
           {clips.map((clip, index) => (
             <button
               key={clip.id}
               onClick={() => setSelectedClip(clip)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-2 transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-2 transition-all whitespace-nowrap ${
                 selectedClip?.id === clip.id
                   ? 'bg-indigo-600 border-indigo-400 text-white shadow-md shadow-indigo-600/30'
                   : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
@@ -355,7 +493,7 @@ export const Studio: React.FC = () => {
         </div>
       )}
 
-      {/* Main 3-Column Studio Editor */}
+      {/* Main 3-Column Studio Editor (Shows whenever sourceVideo is loaded!) */}
       {sourceVideo && selectedClip ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Column 1: Transcript & Fine-tune Trimming (4 cols) */}
@@ -406,16 +544,16 @@ export const Studio: React.FC = () => {
           {/* Column 2: 9:16 Video Preview Canvas (4 cols) */}
           <div className="lg:col-span-4 flex flex-col items-center">
             <VideoPlayer916
-              videoUrl={
-                selectedClip.output_video_path ||
-                `/storage/raw/${sourceVideo.local_path.split('\\').pop()?.split('/').pop()}`
-              }
+              videoUrl={currentVideoUrl}
               startTime={selectedClip.start_time}
               endTime={selectedClip.end_time}
               layoutMode={layoutMode}
               transcriptSegments={sourceVideo.transcript?.segments || []}
               onTimeUpdate={(t) => setCurrentTime(t)}
             />
+            <div className="mt-2 text-center text-[11px] text-slate-400 truncate max-w-[320px]">
+              {sourceVideo.title}
+            </div>
           </div>
 
           {/* Column 3: Brand Compliance, Layout & Render (4 cols) */}

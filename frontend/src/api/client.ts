@@ -49,6 +49,12 @@ export const apiService = {
     const res = await api.get(`/ingest/${id}`);
     return res.data;
   },
+  getSourceVideos: async (campaignId?: string): Promise<SourceVideo[]> => {
+    const res = await api.get('/ingest/', {
+      params: campaignId ? { campaign_id: campaignId } : undefined,
+    });
+    return res.data;
+  },
 
   // Clips
   curateClips: async (videoId: string): Promise<Clip[]> => {

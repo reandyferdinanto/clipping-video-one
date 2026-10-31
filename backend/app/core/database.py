@@ -201,6 +201,23 @@ class Database:
             res["transcript"] = json.loads(res["transcript_json"])
         return res
 
+    @staticmethod
+    def get_source_videos(campaign_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        if campaign_id:
+            cursor.execute("SELECT * FROM source_videos WHERE campaign_id = ? ORDER BY created_at DESC", (campaign_id,))
+        else:
+            cursor.execute("SELECT * FROM source_videos ORDER BY created_at DESC")
+        rows = []
+        for r in cursor.fetchall():
+            res = dict(r)
+            if res.get("transcript_json"):
+                res["transcript"] = json.loads(res["transcript_json"])
+            rows.append(res)
+        conn.close()
+        return rows
+
     # Clips
     @staticmethod
     def save_clip(clip_dict: Dict[str, Any]):

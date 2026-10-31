@@ -93,6 +93,11 @@ async def upload_file(
 
     return video_dict
 
+@router.get("/", response_model=list[SourceVideo])
+def list_source_videos(campaign_id: Optional[str] = None):
+    """List downloaded source videos, optionally filtered by campaign."""
+    return Database.get_source_videos(campaign_id)
+
 @router.get("/{video_id}", response_model=SourceVideo)
 def get_source_video(video_id: str):
     video = Database.get_source_video(video_id)
