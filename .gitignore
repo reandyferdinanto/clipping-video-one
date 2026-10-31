@@ -1,0 +1,40 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.env.local
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Storage & Temporary Media Files
+storage/
+downloads/
+temp/
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+*.wav
+*.mp3
+*.aac
+*.srt
+*.vtt
+*.ass
+
+# Logs & Database
+*.log
+*.sqlite
+*.sqlite3
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
