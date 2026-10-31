@@ -18,6 +18,14 @@ export const apiService = {
     const res = await api.get(`/campaigns/${id}`);
     return res.data;
   },
+  importCampaignByUrl: async (url: string): Promise<Campaign> => {
+    const res = await api.post('/campaigns/fetch-by-url', { url });
+    return res.data;
+  },
+  syncKontenCampaigns: async (): Promise<{ status: string; message: string; synced_campaigns: string[] }> => {
+    const res = await api.post('/campaigns/sync-konten');
+    return res.data;
+  },
 
   // Ingestion
   ingestUrl: async (url: string, sourceType: 'YOUTUBE' | 'GDRIVE', campaignId?: string): Promise<SourceVideo> => {

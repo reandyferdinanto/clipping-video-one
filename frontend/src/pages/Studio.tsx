@@ -1,19 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Video, UploadCloud, Sparkles, Sliders, Download, Film, 
-  Layers, CheckCircle2, AlertCircle, RefreshCw 
+  Layers, CheckCircle2, AlertCircle, RefreshCw, Link as LinkIcon,
+  FolderOpen, ShieldAlert, Check
 } from 'lucide-react';
 import { apiService } from '../api/client';
 import { Campaign, SourceVideo, Clip, RenderOptions } from '../types';
 import { VideoPlayer916 } from '../components/VideoPlayer916';
 import { TranscriptEditor } from '../components/TranscriptEditor';
 import { SubmissionCard } from '../components/SubmissionCard';
-import { message, Spin } from 'antd';
+import { message, Spin, Modal } from 'antd';
 
 export const Studio: React.FC = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   
+  // Real-time Konten.com URL import
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [kontenUrlInput, setKontenUrlInput] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+
   // Ingestion inputs
   const [urlInput, setUrlInput] = useState('');
   const [isProcessingIngest, setIsProcessingIngest] = useState(false);
@@ -31,13 +37,49 @@ export const Studio: React.FC = () => {
 
   // Load campaigns on mount
   useEffect(() => {
-    apiService.getCampaigns().then((data) => {
-      setCampaigns(data);
-      if (data.length > 0) setSelectedCampaignId(data[0].id);
-    });
+    loadCampaigns();
   }, []);
 
+  const loadCampaigns = async () => {
+    try {
+      const data = await apiService.getCampaigns();
+      setCampaigns(data);
+      if (data.length > 0 && !selectedCampaignId) {
+        setSelectedCampaignId(data[0].id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const activeCampaign = campaigns.find((c) => c.id === selectedCampaignId);
+
+  // Import Campaign directly from Konten.com URL
+  const handleImportCampaign = async () => {
+    if (!kontenUrlInput.trim()) {
+      message.warning('Masukkan link campaign Konten.com!');
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const imported = await apiService.importCampaignByUrl(kontenUrlInput);
+      message.success(`Berhasil mengimpor campaign: ${imported.name}`);
+      await loadCampaigns();
+      setSelectedCampaignId(imported.id);
+      setShowImportModal(false);
+      setKontenUrlInput('');
+      
+      // Auto-fill first material if available
+      if (imported.materials && imported.materials.length > 0) {
+        setUrlInput(imported.materials[0].url);
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || 'Gagal mengimpor campaign dari Konten.com');
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   // Handle URL fetch
   const handleFetchUrl = async () => {
@@ -102,14 +144,12 @@ export const Studio: React.FC = () => {
       await apiService.renderClip(selectedClip.id, options);
       message.loading('Sedang merender video 9:16 + Subtitle Safe Zone...', 3);
 
-      // Poll for render status
       const interval = setInterval(async () => {
         const updated = await apiService.getClip(selectedClip.id);
         if (updated.status === 'COMPLETED') {
           clearInterval(interval);
           setIsRendering(false);
           setSelectedClip(updated);
-          // Update in clips list
           setClips((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
           message.success('Video selesai dirender! Siap diunduh.');
         } else if (updated.status === 'FAILED') {
@@ -139,70 +179,153 @@ export const Studio: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
       {/* Top Banner: Ingestion & Campaign Presets */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg backdrop-blur-md">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Campaign Selector */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-              Pilih Campaign Konten.com:
-            </label>
-            <select
-              value={selectedCampaignId}
-              onChange={(e) => setSelectedCampaignId(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-indigo-500"
-            >
-              {campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.brand_name} - {c.name} (Rp {c.cpm_rate.toLocaleString('id-ID')}/1K)
-                </option>
-              ))}
-            </select>
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+            {/* Campaign Selector */}
+            <div className="md:col-span-5">
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-semibold text-slate-400">
+                  Pilih Campaign Konten.com:
+                </label>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                >
+                  <LinkIcon size={12} /> + Import Link Baru
+                </button>
+              </div>
+              <select
+                value={selectedCampaignId}
+                onChange={(e) => {
+                  setSelectedCampaignId(e.target.value);
+                  const found = campaigns.find((c) => c.id === e.target.value);
+                  if (found && found.materials && found.materials.length > 0) {
+                    setUrlInput(found.materials[0].url);
+                  }
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-indigo-500"
+              >
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.brand_name} - {c.name} (Rp {c.cpm_rate.toLocaleString('id-ID')}/1K)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* URL Input */}
+            <div className="md:col-span-7">
+              <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                Input URL YouTube / Google Drive Materi:
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=... atau https://drive.google.com/..."
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-indigo-500 font-mono text-[11px]"
+                />
+                <button
+                  onClick={handleFetchUrl}
+                  disabled={isProcessingIngest}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 whitespace-nowrap"
+                >
+                  {isProcessingIngest ? <Spin size="small" /> : <Sparkles size={14} />}
+                  {isProcessingIngest ? 'Mengunduh...' : 'Analyze & Curate'}
+                </button>
+              </div>
+            </div>
           </div>
 
-          {/* URL Input */}
-          <div className="md:col-span-2">
-            <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-              Input URL YouTube / Google Drive Materi Brand:
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="https://www.youtube.com/watch?v=... atau https://drive.google.com/..."
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-indigo-500"
-              />
-              <button
-                onClick={handleFetchUrl}
-                disabled={isProcessingIngest}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20"
-              >
-                {isProcessingIngest ? <Spin size="small" /> : <Sparkles size={14} />}
-                {isProcessingIngest ? 'Mengunduh...' : 'Analyze & Curate'}
-              </button>
+          {/* Materi Quick-Picker (if campaign has multiple official materials from Konten.com) */}
+          {activeCampaign?.materials && activeCampaign.materials.length > 0 && (
+            <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                <FolderOpen size={12} className="text-indigo-400" /> Materi Resmi Campaign:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {activeCampaign.materials.map((m, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setUrlInput(m.url)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] border transition-all ${
+                      urlInput === m.url
+                        ? 'bg-indigo-950/80 border-indigo-500 text-indigo-300 font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    {m.title || `Materi #${idx + 1}`}
+                  </button>
+                ))}
+              </div>
             </div>
+          )}
+
+          {/* Campaign Info Bar */}
+          {activeCampaign && (
+            <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-slate-300 font-semibold">{activeCampaign.name}</span>
+                <span className="bg-indigo-950/60 border border-indigo-800 text-indigo-400 px-2 py-0.5 rounded-full font-mono text-[11px]">
+                  Target: {activeCampaign.min_clip_duration}s - {activeCampaign.max_clip_duration}s
+                </span>
+                {activeCampaign.mandatory_outro_required && (
+                  <span className="bg-yellow-950/60 border border-yellow-800 text-yellow-400 px-2 py-0.5 rounded-full text-[11px]">
+                    Wajib Poster Outro
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-400">
+                CPM: <strong className="text-emerald-400">Rp {activeCampaign.cpm_rate.toLocaleString('id-ID')}</strong> | Min Views: {activeCampaign.min_views_threshold.toLocaleString('id-ID')}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modal Import Campaign Konten.com */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-white">
+            <LinkIcon size={16} className="text-indigo-400" />
+            <span>Import Campaign dari Link Konten.com</span>
+          </div>
+        }
+        open={showImportModal}
+        onCancel={() => setShowImportModal(false)}
+        footer={null}
+      >
+        <div className="space-y-4 py-2">
+          <p className="text-xs text-slate-400">
+            Tempelkan link campaign dari browser Anda (contoh: <code>https://konten.com/campaigns/growlab-beyond-the-podcast-1</code>).
+            Sistem akan secara instan mengekstrak seluruh materi, CPM, durasi, tagar wajib, dan Do's & Don'ts brand!
+          </p>
+          <input
+            type="text"
+            placeholder="https://konten.com/campaigns/..."
+            value={kontenUrlInput}
+            onChange={(e) => setKontenUrlInput(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-indigo-500 font-mono"
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => setShowImportModal(false)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-semibold text-slate-300"
+            >
+              Batal
+            </button>
+            <button
+              onClick={handleImportCampaign}
+              disabled={isImporting}
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 shadow-md shadow-indigo-600/30"
+            >
+              {isImporting ? <Spin size="small" /> : <Sparkles size={14} />}
+              {isImporting ? 'Mengimpor...' : 'Scrape & Import Sekarang'}
+            </button>
           </div>
         </div>
-
-        {/* Campaign Info Bar */}
-        {activeCampaign && (
-          <div className="mt-4 pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-            <div className="flex items-center gap-3">
-              <span className="text-slate-300 font-semibold">{activeCampaign.name}</span>
-              <span className="bg-indigo-950/60 border border-indigo-800 text-indigo-400 px-2 py-0.5 rounded-full font-mono text-[11px]">
-                Target: {activeCampaign.min_clip_duration}s - {activeCampaign.max_clip_duration}s
-              </span>
-              {activeCampaign.mandatory_outro_required && (
-                <span className="bg-yellow-950/60 border border-yellow-800 text-yellow-400 px-2 py-0.5 rounded-full text-[11px]">
-                  Wajib Poster Outro
-                </span>
-              )}
-            </div>
-            <div className="text-[11px] text-slate-400">
-              CPM: <strong className="text-emerald-400">Rp {activeCampaign.cpm_rate.toLocaleString('id-ID')}</strong> | Min Views: {activeCampaign.min_views_threshold.toLocaleString('id-ID')}
-            </div>
-          </div>
-        )}
-      </div>
+      </Modal>
 
       {/* Curated Clips Selector Pills */}
       {clips.length > 0 && (
@@ -375,7 +498,7 @@ export const Studio: React.FC = () => {
           <Film className="mx-auto text-slate-600 mb-3" size={40} />
           <h3 className="text-base font-bold text-slate-300">Mulai Produksi Klip Konten.com</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-            Pilih campaign di atas, tempelkan link materi YouTube atau Google Drive resmi brand, lalu klik Analyze & Curate.
+            Pilih campaign di atas atau import link campaign Konten.com, pilih materi resmi, lalu klik <strong>Analyze & Curate</strong>.
           </p>
         </div>
       )}

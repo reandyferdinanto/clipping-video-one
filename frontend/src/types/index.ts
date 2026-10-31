@@ -1,3 +1,8 @@
+export interface CampaignMaterial {
+  title: string;
+  url: string;
+}
+
 export interface Campaign {
   id: string;
   name: string;
@@ -11,6 +16,10 @@ export interface Campaign {
   mandatory_outro_required: boolean;
   mandatory_outro_file?: string;
   dos_and_donts_rules?: string;
+  cta_text?: string;
+  slug?: string;
+  thumbnail_url?: string;
+  materials?: CampaignMaterial[];
   created_at: string;
 }
 

@@ -3,7 +3,6 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from app.core.config import settings
-from app.models.schemas import Campaign, SourceVideo, Clip
 
 DB_PATH = settings.STORAGE_DIR / "app.db"
 
@@ -15,6 +14,7 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS campaigns (
         id TEXT PRIMARY KEY,
+        slug TEXT,
         name TEXT NOT NULL,
         brand_name TEXT NOT NULL,
         cpm_rate INTEGER NOT NULL,
@@ -26,9 +26,27 @@ def init_db():
         mandatory_outro_required INTEGER DEFAULT 1,
         mandatory_outro_file TEXT,
         dos_and_donts_rules TEXT,
+        cta_text TEXT,
+        thumbnail_url TEXT,
+        materials_json TEXT,
         created_at TEXT NOT NULL
     );
     """)
+
+    # Check and add any missing columns in existing db table
+    cursor.execute("PRAGMA table_info(campaigns)")
+    existing_cols = [c[1] for c in cursor.fetchall()]
+    for col_name, col_type in [
+        ("slug", "TEXT"),
+        ("cta_text", "TEXT"),
+        ("thumbnail_url", "TEXT"),
+        ("materials_json", "TEXT")
+    ]:
+        if col_name not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE campaigns ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
     
     # 2. Source Videos table
     cursor.execute("""
@@ -69,65 +87,6 @@ def init_db():
     );
     """)
     
-    # Seed default Konten.com campaigns if empty
-    cursor.execute("SELECT COUNT(*) FROM campaigns")
-    count = cursor.fetchone()[0]
-    if count == 0:
-        seed_campaigns = [
-            (
-                "camp-hamka-vol3",
-                "Awal Mula Hamka Vol.3 - Trailer, Reaksi & BTS",
-                "Falcon Pictures",
-                2000,
-                10000,
-                20,
-                120,
-                "#awalmulahamka #buyahamka #kontenfchamka",
-                "Nonton AWAL MULA HAMKA 19 November 2026 di Bioskop! Perjalanan Buya Hamka yang inspiratif #awalmulahamka #buyahamka #kontenfchamka",
-                1,
-                "hamka_vol3_poster.jpg",
-                "Wajib menggunakan salah satu materi interview/reaksi ustadz/trailer. Wajib poster atau CTA 'Nonton AWAL MULA HAMKA 19 November 2026 di Bioskop' di akhir video. Dilarang menggunakan footage Vol 1 & 2. Dilarang hook kontroversial/hoaks/SARA.",
-                "2026-10-31T00:00:00"
-            ),
-            (
-                "camp-sulianto-crypto",
-                "Sulianto Indria Putra - Youtube Long Form Clipping",
-                "Sulianto Indria Putra",
-                4000,
-                1000,
-                20,
-                120,
-                "#takeprofitshow",
-                "Pelajaran penting dari crypto market. Nonton selengkapnya di YouTube: @suliantoindriaputra #takeprofitshow",
-                1,
-                "sulianto_cta.jpg",
-                "Wajib subtitle auto-caption rapi tidak menutup wajah. Tambah sound effect/transisi. CTA di akhir video: Nonton selengkapnya di YouTube: @suliantoindriaputra. Dilarang buat klaim profit pasti/ajakan invest. Dilarang ganti suara dengan AI dubbing.",
-                "2026-10-31T00:00:00"
-            ),
-            (
-                "camp-karyatulis-ai",
-                "Karyatulis.ai - Smart AI Writing Assistant",
-                "Karya Tulis",
-                5000,
-                1000,
-                15,
-                60,
-                "#karyatulisai #aiwriter #produktivitas",
-                "Bikin tulisan berkualitas dalam hitungan menit pakai Karyatulis.ai! #karyatulisai #aiwriter",
-                1,
-                "karyatulis_cta.jpg",
-                "Tampilkan kemudahan penulisan skripsi/artikel. Dilarang konten plagiat atau klaim menyesatkan.",
-                "2026-10-31T00:00:00"
-            )
-        ]
-        cursor.executemany("""
-        INSERT INTO campaigns (
-            id, name, brand_name, cpm_rate, min_views_threshold, min_clip_duration,
-            max_clip_duration, required_tags, caption_template, mandatory_outro_required,
-            mandatory_outro_file, dos_and_donts_rules, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, seed_campaigns)
-        
     conn.commit()
     conn.close()
 
@@ -144,7 +103,14 @@ class Database:
         conn = Database.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM campaigns ORDER BY created_at DESC")
-        rows = [dict(r) for r in cursor.fetchall()]
+        rows = []
+        for r in cursor.fetchall():
+            d = dict(r)
+            if d.get("materials_json"):
+                d["materials"] = json.loads(d["materials_json"])
+            else:
+                d["materials"] = []
+            rows.append(d)
         conn.close()
         return rows
 
@@ -152,10 +118,50 @@ class Database:
     def get_campaign(campaign_id: str) -> Optional[Dict[str, Any]]:
         conn = Database.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,))
+        cursor.execute("SELECT * FROM campaigns WHERE id = ? OR slug = ?", (campaign_id, campaign_id))
         row = cursor.fetchone()
         conn.close()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        if d.get("materials_json"):
+            d["materials"] = json.loads(d["materials_json"])
+        else:
+            d["materials"] = []
+        return d
+
+    @staticmethod
+    def save_campaign(camp_dict: Dict[str, Any]):
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT OR REPLACE INTO campaigns (
+            id, slug, name, brand_name, cpm_rate, min_views_threshold, min_clip_duration,
+            max_clip_duration, required_tags, caption_template, mandatory_outro_required,
+            mandatory_outro_file, dos_and_donts_rules, cta_text, thumbnail_url,
+            materials_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            camp_dict["id"],
+            camp_dict.get("slug"),
+            camp_dict["name"],
+            camp_dict["brand_name"],
+            camp_dict.get("cpm_rate", 2000),
+            camp_dict.get("min_views_threshold", 1000),
+            camp_dict.get("min_clip_duration", 30),
+            camp_dict.get("max_clip_duration", 60),
+            camp_dict.get("required_tags", "#kontencom"),
+            camp_dict.get("caption_template"),
+            1 if camp_dict.get("mandatory_outro_required", True) else 0,
+            camp_dict.get("mandatory_outro_file"),
+            camp_dict.get("dos_and_donts_rules"),
+            camp_dict.get("cta_text"),
+            camp_dict.get("thumbnail_url"),
+            json.dumps(camp_dict.get("materials", [])),
+            camp_dict.get("created_at")
+        ))
+        conn.commit()
+        conn.close()
 
     # Source Videos
     @staticmethod

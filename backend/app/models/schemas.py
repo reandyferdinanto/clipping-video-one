@@ -3,6 +3,10 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 # ==================== CAMPAIGN MODELS ====================
+class CampaignMaterial(BaseModel):
+    title: str
+    url: str
+
 class CampaignBase(BaseModel):
     name: str = Field(..., description="Nama campaign, contoh: Awal Mula Hamka Vol. 3")
     brand_name: str = Field(..., description="Nama brand/penerbit, contoh: Falcon Pictures")
@@ -18,6 +22,14 @@ class CampaignBase(BaseModel):
         "Dilarang menggunakan hook kontroversial, SARA, hoaks, atau politik. Wajib poster di akhir.",
         description="Aturan brief untuk panduan AI"
     )
+    cta_text: Optional[str] = None
+    slug: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    materials: List[CampaignMaterial] = []
+
+class CampaignImportRequest(BaseModel):
+    url: str = Field(..., description="URL campaign Konten.com atau slug, contoh: https://konten.com/campaigns/awal-mula-hamka-vol-3-trailer-bts")
+
 
 class CampaignCreate(CampaignBase):
     pass
