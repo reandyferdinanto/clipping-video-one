@@ -36,7 +36,7 @@ def ingest_url(request: IngestRequest, background_tasks: BackgroundTasks):
         else:
             info = IngestionService.fetch_youtube(request.source_url)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal mengunduh materi: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Gagal mengunduh materi: {str(e)}")
 
     video_dict = {
         "id": info["id"],
